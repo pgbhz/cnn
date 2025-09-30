@@ -14,8 +14,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-// ---------------- Global hyperparameters & model sizes ----------------
-// Move these here so they are easy to find and edit.
+// Global hyperparameters & model sizes
 // Filters, kernel, output classes
 const int F = 8;
 const int K = 3;
