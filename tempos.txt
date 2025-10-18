@@ -1,0 +1,2 @@
+sequencial = 9.153s
+parallel   = 8,492s

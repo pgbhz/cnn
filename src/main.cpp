@@ -13,6 +13,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdlib>
+#include <omp.h>
 
 // Global hyperparameters & model sizes
 // Filters, kernel, output classes
@@ -70,6 +71,7 @@ std::vector<float> conv2d_nchw_pad1(
     const int OW = W;
     std::vector<float> y((size_t)N * F * OH * OW, 0.0f);
 
+    #pragma omp parallel for collapse(3) schedule(static)
     for (int n = 0; n < N; ++n)
     {
         for (int f = 0; f < F; ++f)
@@ -116,6 +118,7 @@ std::vector<float> conv2d_nchw_pad1(
  */
 void relu_inplace_nchw(std::vector<float> &x)
 {
+    #pragma omp parallel for 
     for (auto &v : x)
         if (v < 0.0f)
             v = 0.0f;
@@ -149,6 +152,8 @@ std::vector<float> maxpool2d_2x2_s2(
     OH = H / 2;
     OW = W / 2;
     std::vector<float> y((size_t)N * C * OH * OW, 0.0f);
+
+    #pragma omp parallel for collapse(4) schedule(static)
     for (int n = 0; n < N; ++n)
     {
         for (int c = 0; c < C; ++c)
@@ -213,6 +218,7 @@ std::vector<float> linear_forward(const std::vector<float> &X, int N, int D,
                                   const std::vector<float> &W, const std::vector<float> &b, int O)
 {
     std::vector<float> Y((size_t)N * O, 0.0f);
+    #pragma omp parallel for 
     for (int n = 0; n < N; ++n)
     {
         for (int o = 0; o < O; ++o)
@@ -310,6 +316,8 @@ bool load_mnist_images(const std::string &path, std::vector<float> &out, int &N,
     H = (int)h;
     W = (int)w;
     out.resize((size_t)N * H * W);
+
+    
     for (int i = 0; i < N; ++i)
     {
         for (int p = 0; p < H * W; ++p)
@@ -394,6 +402,8 @@ float cross_entropy_with_logits_grad(const std::vector<float> &logits, const std
     }
     // average over batch
     float invN = 1.0f / (float)N;
+
+    #pragma omp parallel for 
     for (auto &v : dlogits)
         v *= invN;
     return loss * invN;
@@ -423,6 +433,8 @@ void linear_backward(const std::vector<float> &X, int N, int D,
     dX.assign((size_t)N * D, 0.0f);
     dW.assign((size_t)D * O, 0.0f);
     db.assign((size_t)O, 0.0f);
+
+    #pragma omp parallel for reduction(+:db[:O]) reduction(+:dW[:D*O])
     for (int n = 0; n < N; ++n)
     {
         for (int o = 0; o < O; ++o)
@@ -444,6 +456,8 @@ void linear_backward(const std::vector<float> &X, int N, int D,
 void relu_backward_inplace(std::vector<float> &dY, const std::vector<float> &Y)
 {
     const size_t sz = dY.size();
+
+    #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < sz; ++i)
         if (Y[i] <= 0.0f)
             dY[i] = 0.0f;
@@ -472,6 +486,8 @@ std::vector<float> maxpool2d_2x2_s2_backward(
     const std::vector<float> &dY, int OH, int OW)
 {
     std::vector<float> dX((size_t)N * C * H * W, 0.0f);
+
+    #pragma omp parallel for collapse(4) schedule(static)
     for (int n = 0; n < N; ++n)
     {
         for (int c = 0; c < C; ++c)
@@ -539,6 +555,7 @@ void conv2d_nchw_pad1_backward(
     dbc.assign((size_t)F, 0.0f);
 
     // db
+     #pragma omp parallel for collapse(3) reduction(+:dbc[:F])
     for (int n = 0; n < N; ++n)
         for (int f = 0; f < F; ++f)
             for (int i = 0; i < OH; ++i)
@@ -546,6 +563,7 @@ void conv2d_nchw_pad1_backward(
                     dbc[f] += dY[idx4(n, f, i, j, F, OH, OW)];
 
     // dW and dX
+    #pragma omp parallel for reduction(+:dWc[:F*C*K*K])
     for (int n = 0; n < N; ++n)
     {
         for (int f = 0; f < F; ++f)
@@ -709,10 +727,14 @@ float evaluate_on_mnist(const std::string &imgPath, const std::string &lblPath, 
     const int H2 = H / 2, W2 = W / 2;
     const int D = F * H2 * W2;
     const int BATCH = 64;
+
+
     for (int s = 0; s < N; s += BATCH)
     {
         int B = std::min(BATCH, N - s);
         std::vector<float> Xb((size_t)B * C * H * W, 0.0f);
+
+        #pragma omp parallel for collapse(2) schedule(guided)
         for (int b = 0; b < B; ++b)
         {
             int idx = s + b;
@@ -720,12 +742,15 @@ float evaluate_on_mnist(const std::string &imgPath, const std::string &lblPath, 
                 for (int j = 0; j < W; ++j)
                     Xb[idx4(b, 0, i, j, C, H, W)] = imgs[(size_t)idx * H * W + (size_t)i * W + j];
         }
+
         auto y1 = conv2d_nchw_pad1(Xb, B, C, H, W, Wc, bc, F, K);
         relu_inplace_nchw(y1);
         int H2o = 0, W2o = 0;
         auto y2 = maxpool2d_2x2_s2(y1, B, F, H, W, H2o, W2o);
         auto Xflat = flatten_nchw(y2, B, F, H2o, W2o);
         auto logits = linear_forward(Xflat, B, D, Wl, bl, O);
+        
+        #pragma omp parallel for reduction(+:correct)
         for (int b = 0; b < B; ++b)
         {
             int argm = 0;
