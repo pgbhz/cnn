@@ -1,2 +1,2 @@
-sequencial = 9.153s
-parallel   = 8,492s
+sequencial = 5.843s
+parallel   = 2.873s
