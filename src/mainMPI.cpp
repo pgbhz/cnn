@@ -1,4 +1,17 @@
 /*
+OS - Kubuntu 25.04
+CPU - Intel Core i5-12500
+MEM - 16 GB
+G++ - 14.2
+MPI - 5.0.7
+
+Tempos de Execução
+1 Processo - 19.5s
+2 Processos - 10.3s
+4 Processos - 6.1s
+*/
+
+/*
     Tiny CNN primitives.
 */
 
@@ -13,7 +26,8 @@
 #include <string>
 #include <algorithm>
 #include <cstdlib>
-#include <omp.h>
+// #include <omp.h>
+#include <mpi.h>
 
 // Global hyperparameters & model sizes
 // Filters, kernel, output classes
@@ -21,10 +35,10 @@ const int F = 8;
 const int K = 3;
 const int O = 10;
 // Training loop settings
-const int trainN = 256; // number of samples to train on
-const int batch = 32;   // batch size
-const int epochs = 50;  // epochs
-const float lr = 0.01f; // learning rate
+const int trainN = 1024; // number of samples to train on
+const int batch = 32;    // batch size
+const int epochs = 50;   // epochs
+const float lr = 0.01f;  // learning rate
 
 /**
  * @brief Computes the flattened 1D index for a 4D tensor (N, C, H, W) in row-major order.
@@ -63,7 +77,7 @@ static inline size_t idx4(int n, int c, int h, int w, int C, int H, int W)
  */
 std::vector<float> conv2d_nchw_pad1(
     const std::vector<float> &x, int N, int C, int H, int W,
-    const std::vector<float> &w, const std::vector<float> &b, int F, int K)
+    const std::vector<float> &w, const std::vector<float> &b, int F, int K, int rank, int processes)
 {
     assert(K == 3 && "This minimal impl assumes K=3 for pad=1, stride=1");
     const int pad = 1;
@@ -71,16 +85,17 @@ std::vector<float> conv2d_nchw_pad1(
     const int OW = W;
     std::vector<float> y((size_t)N * F * OH * OW, 0.0f);
 
-#pragma omp parallel for collapse(3) schedule(static)
-    for (int n = 0; n < N; ++n)
+    for (int n = 0; n < N; n++)
     {
         for (int f = 0; f < F; ++f)
         {
             for (int i = 0; i < OH; ++i)
             {
+
                 for (int j = 0; j < OW; ++j)
                 {
                     float acc = b.empty() ? 0.0f : b[f];
+
                     for (int c = 0; c < C; ++c)
                     {
                         for (int ki = 0; ki < K; ++ki)
@@ -118,10 +133,10 @@ std::vector<float> conv2d_nchw_pad1(
  */
 void relu_inplace_nchw(std::vector<float> &x)
 {
-#pragma omp parallel for
-    for (auto &v : x)
-        if (v < 0.0f)
-            v = 0.0f;
+
+    for (int i = 0; i < x.size(); i++)
+        if (x[i] < 0.0f)
+            x[i] = 0.0f;
 }
 
 /**
@@ -153,7 +168,6 @@ std::vector<float> maxpool2d_2x2_s2(
     OW = W / 2;
     std::vector<float> y((size_t)N * C * OH * OW, 0.0f);
 
-#pragma omp parallel for collapse(4) schedule(static)
     for (int n = 0; n < N; ++n)
     {
         for (int c = 0; c < C; ++c)
@@ -163,6 +177,7 @@ std::vector<float> maxpool2d_2x2_s2(
                 for (int j = 0; j < OW; ++j)
                 {
                     float m = -1e30f;
+
                     for (int di = 0; di < 2; ++di)
                     {
                         for (int dj = 0; dj < 2; ++dj)
@@ -217,13 +232,16 @@ std::vector<float> flatten_nchw(const std::vector<float> &x, int N, int C, int H
 std::vector<float> linear_forward(const std::vector<float> &X, int N, int D,
                                   const std::vector<float> &W, const std::vector<float> &b, int O)
 {
+    float acc;
     std::vector<float> Y((size_t)N * O, 0.0f);
-#pragma omp parallel for
+    bool flag = b.empty();
+
     for (int n = 0; n < N; ++n)
     {
         for (int o = 0; o < O; ++o)
         {
-            float acc = b.empty() ? 0.0f : b[o];
+            acc = b.empty() ? 0.0f : b[o];
+
             for (int d = 0; d < D; ++d)
             {
                 acc += X[(size_t)n * D + d] * W[(size_t)d * O + o];
@@ -249,12 +267,15 @@ std::vector<float> linear_forward(const std::vector<float> &X, int N, int D,
 std::vector<float> softmax(const std::vector<float> &logits, int N, int C)
 {
     std::vector<float> probs((size_t)N * C, 0.0f);
+
     for (int n = 0; n < N; ++n)
     {
         float m = -1e30f;
+
         for (int c = 0; c < C; ++c)
             m = std::max(m, logits[(size_t)n * C + c]);
         float sum = 0.0f;
+
         for (int c = 0; c < C; ++c)
         {
             float e = std::exp(logits[(size_t)n * C + c] - m);
@@ -262,6 +283,7 @@ std::vector<float> softmax(const std::vector<float> &logits, int N, int C)
             sum += e;
         }
         float inv = 1.0f / sum;
+
         for (int c = 0; c < C; ++c)
             probs[(size_t)n * C + c] *= inv;
     }
@@ -378,13 +400,16 @@ float cross_entropy_with_logits_grad(const std::vector<float> &logits, const std
 {
     dlogits.assign((size_t)N * C, 0.0f);
     float loss = 0.0f;
+
     for (int n = 0; n < N; ++n)
     {
         // compute stable softmax for this sample and accumulate gradient
         float m = -1e30f;
+
         for (int c = 0; c < C; ++c)
             m = std::max(m, logits[(size_t)n * C + c]);
         float sum = 0.0f;
+
         for (int c = 0; c < C; ++c)
             sum += std::exp(logits[(size_t)n * C + c] - m);
         float log_sum = std::log(sum);
@@ -392,6 +417,7 @@ float cross_entropy_with_logits_grad(const std::vector<float> &logits, const std
         float logpy = logits[(size_t)n * C + y] - m - log_sum;
         loss += -logpy;
         // grad: softmax - onehot
+
         for (int c = 0; c < C; ++c)
         {
             float p = std::exp(logits[(size_t)n * C + c] - m - log_sum);
@@ -402,9 +428,8 @@ float cross_entropy_with_logits_grad(const std::vector<float> &logits, const std
     // average over batch
     float invN = 1.0f / (float)N;
 
-#pragma omp parallel for
-    for (auto &v : dlogits)
-        v *= invN;
+    for (int i = 0; i < N * C; i++)
+        dlogits[i] *= invN;
     return loss * invN;
 }
 
@@ -433,35 +458,20 @@ void linear_backward(const std::vector<float> &X, int N, int D,
     dW.assign((size_t)D * O, 0.0f);
     db.assign((size_t)O, 0.0f);
 
-#pragma omp parallel
+    float aux;
+
+    for (int n = 0; n < N; ++n)
     {
-        // acumuladores locais por thread
-        std::vector<float> dW_local((size_t)D * O, 0.0f);
-        std::vector<float> db_local((size_t)O, 0.0f);
-
-// cada thread pega um subconjunto de n; dX[n,*] é exclusivo e pode escrever direto
-#pragma omp for schedule(static)
-        for (int n = 0; n < N; ++n)
+        for (int o = 0; o < O; ++o)
         {
-            for (int o = 0; o < O; ++o)
+            aux = db[0];
+            aux += dY[(size_t)n * O + o];
+            for (int d = 0; d < D; ++d)
             {
-                float g = dY[(size_t)n * O + o];
-                db_local[o] += g;
-                for (int d = 0; d < D; ++d)
-                {
-                    dW_local[(size_t)d * O + o] += X[(size_t)n * D + d] * g;
-                    dX[(size_t)n * D + d] += W[(size_t)d * O + o] * g;
-                }
+                dW[(size_t)d * O + o] += X[(size_t)n * D + d] * dY[(size_t)n * O + o];
+                dX[(size_t)n * D + d] += W[(size_t)d * O + o] * dY[(size_t)n * O + o];
             }
-        }
-
-// fusão segura
-#pragma omp critical
-        {
-            for (size_t i = 0; i < dW.size(); ++i)
-                dW[i] += dW_local[i];
-            for (int o = 0; o < O; ++o)
-                db[o] += db_local[o];
+            db[o] = aux;
         }
     }
 }
@@ -473,7 +483,6 @@ void relu_backward_inplace(std::vector<float> &dY, const std::vector<float> &Y)
 {
     const size_t sz = dY.size();
 
-#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < sz; ++i)
         if (Y[i] <= 0.0f)
             dY[i] = 0.0f;
@@ -503,7 +512,8 @@ std::vector<float> maxpool2d_2x2_s2_backward(
 {
     std::vector<float> dX((size_t)N * C * H * W, 0.0f);
 
-#pragma omp parallel for collapse(4) schedule(static)
+    // TODO: Verificar paralelismo
+
     for (int n = 0; n < N; ++n)
     {
         for (int c = 0; c < C; ++c)
@@ -516,6 +526,7 @@ std::vector<float> maxpool2d_2x2_s2_backward(
                     int bi = 2 * i, bj = 2 * j;
                     float m = -1e30f;
                     int mi = bi, mj = bj;
+
                     for (int di = 0; di < 2; ++di)
                     {
                         for (int dj = 0; dj < 2; ++dj)
@@ -566,64 +577,53 @@ void conv2d_nchw_pad1_backward(
 {
     const int pad = 1;
     const int OH = H, OW = W;
-
     dX.assign((size_t)N * C * H * W, 0.0f);
     dWc.assign((size_t)F * C * K * K, 0.0f);
     dbc.assign((size_t)F, 0.0f);
 
-#pragma omp parallel
-    {
-        std::vector<float> dWc_local((size_t)F * C * K * K, 0.0f);
-        std::vector<float> dbc_local((size_t)F, 0.0f);
+    float aux;
 
-// distribui (n,f,i); itera j por dentro
-#pragma omp for collapse(3) schedule(static)
-        for (int n = 0; n < N; ++n)
+    // db
+
+    for (int n = 0; n < N; ++n)
+        for (int f = 0; f < F; ++f)
         {
-            for (int f = 0; f < F; ++f)
+            aux = dbc[f];
+
+            for (int i = 0; i < OH; ++i)
+                for (int j = 0; j < OW; ++j)
+                    aux += dY[idx4(n, f, i, j, F, OH, OW)];
+            dbc[f] = aux;
+        }
+    // dW and dX
+
+    for (int n = 0; n < N; ++n)
+    {
+        for (int f = 0; f < F; ++f)
+        {
+            for (int i = 0; i < OH; ++i)
             {
-                for (int i = 0; i < OH; ++i)
+                for (int j = 0; j < OW; ++j)
                 {
-                    for (int j = 0; j < OW; ++j)
+
+                    for (int c = 0; c < C; ++c)
                     {
-                        float g = dY[idx4(n, f, i, j, F, OH, OW)];
-                        dbc_local[f] += g;
-
-                        for (int c = 0; c < C; ++c)
+                        for (int ki = 0; ki < K; ++ki)
                         {
-                            for (int ki = 0; ki < K; ++ki)
+                            for (int kj = 0; kj < K; ++kj)
                             {
-                                for (int kj = 0; kj < K; ++kj)
+                                int in_i = i + ki - pad;
+                                int in_j = j + kj - pad;
+                                if (in_i >= 0 && in_i < H && in_j >= 0 && in_j < W)
                                 {
-                                    int in_i = i + ki - pad;
-                                    int in_j = j + kj - pad;
-                                    if (in_i >= 0 && in_i < H && in_j >= 0 && in_j < W)
-                                    {
-                                        size_t xidx = idx4(n, c, in_i, in_j, C, H, W);
-                                        size_t widx = ((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj;
-                                        float xv = X[xidx];
-
-                                        dWc_local[widx] += xv * g;
-
-// dX recebe contribuições de múltiplos (f,i,j) -> atomic
-#pragma omp atomic
-                                        dX[xidx] += Wc[widx] * g;
-                                    }
+                                    dWc[((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj] += X[idx4(n, c, in_i, in_j, C, H, W)] * dY[idx4(n, f, i, j, F, OH, OW)];
+                                    dX[idx4(n, c, in_i, in_j, C, H, W)] += Wc[((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj] * dY[idx4(n, f, i, j, F, OH, OW)];
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-
-// fusão
-#pragma omp critical
-        {
-            for (size_t i = 0; i < dWc.size(); ++i)
-                dWc[i] += dWc_local[i];
-            for (int f = 0; f < F; ++f)
-                dbc[f] += dbc_local[f];
         }
     }
 }
@@ -766,27 +766,27 @@ float evaluate_on_mnist(const std::string &imgPath, const std::string &lblPath, 
         int B = std::min(BATCH, N - s);
         std::vector<float> Xb((size_t)B * C * H * W, 0.0f);
 
-#pragma omp parallel for collapse(2) schedule(guided)
         for (int b = 0; b < B; ++b)
         {
             int idx = s + b;
+
             for (int i = 0; i < H; ++i)
                 for (int j = 0; j < W; ++j)
                     Xb[idx4(b, 0, i, j, C, H, W)] = imgs[(size_t)idx * H * W + (size_t)i * W + j];
         }
 
-        auto y1 = conv2d_nchw_pad1(Xb, B, C, H, W, Wc, bc, F, K);
+        auto y1 = conv2d_nchw_pad1(Xb, B, C, H, W, Wc, bc, F, K, 0, 1);
         relu_inplace_nchw(y1);
         int H2o = 0, W2o = 0;
         auto y2 = maxpool2d_2x2_s2(y1, B, F, H, W, H2o, W2o);
         auto Xflat = flatten_nchw(y2, B, F, H2o, W2o);
         auto logits = linear_forward(Xflat, B, D, Wl, bl, O);
 
-#pragma omp parallel for reduction(+ : correct)
         for (int b = 0; b < B; ++b)
         {
             int argm = 0;
             float best = logits[(size_t)b * O + 0];
+
             for (int c = 1; c < O; ++c)
             {
                 float v = logits[(size_t)b * O + c];
@@ -803,8 +803,15 @@ float evaluate_on_mnist(const std::string &imgPath, const std::string &lblPath, 
     return 100.0f * correct / std::max(1, N);
 }
 
-int main()
+int main(int argc, char *argv[])
 {
+
+    int rank, processos;
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &processos);
+
     // Try to load one MNIST sample if file paths are given: ./cnn_minimal <images-idx3-ubyte> <labels-idx1-ubyte>
     int N = 1, C = 1, H = 28, W = 28;
     std::vector<float> x((size_t)N * C * H * W, 0.0f);
@@ -823,6 +830,7 @@ int main()
         if (load_mnist_images(env_imgs, imgs, nimg, lh, lw, 1) && load_mnist_labels(env_lbls, lbls, nlbl, 1) && nimg >= 1 && nlbl >= 1)
         {
             // Move into x in NCHW
+
             for (int i = 0; i < H; ++i)
             {
                 for (int j = 0; j < W; ++j)
@@ -838,6 +846,7 @@ int main()
     if (!used_mnist)
     {
         // Synthetic input: a simple blob in the center
+
         for (int i = 10; i < 18; ++i)
         {
             for (int j = 10; j < 18; ++j)
@@ -866,6 +875,7 @@ int main()
     }
     const int Ntrain = std::min(nimg, nlbl);
     std::vector<int> labelsInt(Ntrain);
+
     for (int i = 0; i < Ntrain; ++i)
         labelsInt[i] = (int)lblsU8[i];
 
@@ -874,17 +884,20 @@ int main()
     std::normal_distribution<float> ndc(0.0f, std::sqrt(2.0f / (C * 3.0f * 3.0f)));
     std::normal_distribution<float> ndl(0.0f, std::sqrt(2.0f / (F * 14.0f * 14.0f)));
     std::vector<float> Wc((size_t)F * C * K * K);
-    for (auto &w_ : Wc)
-        w_ = ndc(rng);
+
+    for (int i = 0; i < F * C * K * K; i++)
+        Wc[i] = ndc(rng);
     std::vector<float> bc(F, 0.0f);
     const int D = F * 14 * 14; // after pool
     std::vector<float> Wl((size_t)D * O);
-    for (auto &w_ : Wl)
-        w_ = ndl(rng);
+
+    for (int i = 0; i < D * O; i++)
+        Wl[i] = ndl(rng);
     std::vector<float> bl(O, 0.0f);
 
     // Indices for shuffling
     std::vector<int> indices(Ntrain);
+
     for (int i = 0; i < Ntrain; ++i)
         indices[i] = i;
 
@@ -892,11 +905,13 @@ int main()
     {
         Xbatch.assign((size_t)B * C * H * W, 0.0f);
         Ybatch.resize(B);
+
         for (int b = 0; b < B; ++b)
         {
             int idx = indices[start + b];
             Ybatch[b] = labelsInt[idx];
             // copy image idx (H*W) into (b,0,:,:)
+
             for (int i = 0; i < H; ++i)
             {
                 for (int j = 0; j < W; ++j)
@@ -907,23 +922,31 @@ int main()
         }
     };
 
+    float epoch_loss_buffer = 0.0f;
+    int epoch_count_buffer = 0;
+    int correct_buffer = 0;
+    int total_buffer = 0;
+
     // Training loop
     float epoch_loss = 0.0f;
     int epoch_count = 0;
     int correct = 0;
     int total = 0;
-    for (int ep = 0; ep < epochs; ++ep)
+
+    for (int ep = 0; ep < epochs; ep++)
     {
         std::shuffle(indices.begin(), indices.end(), rng);
-        for (int s = 0; s < Ntrain; s += batch)
+
+        for (int s = rank * batch; s < Ntrain; s += batch * processos)
         {
             int B = std::min(batch, Ntrain - s);
+
             std::vector<float> Xb;
             std::vector<int> Yb;
             get_batch(s, B, Xb, Yb);
 
             // Forward
-            auto y1 = conv2d_nchw_pad1(Xb, B, C, H, W, Wc, bc, F, K);
+            auto y1 = conv2d_nchw_pad1(Xb, B, C, H, W, Wc, bc, F, K, 0, 1);
             relu_inplace_nchw(y1);
             int H2 = 0, W2 = 0;
             auto y2 = maxpool2d_2x2_s2(y1, B, F, H, W, H2, W2); // 14x14
@@ -939,10 +962,12 @@ int main()
             epoch_count += 1;
 
             // Accuracy (quick)
+
             for (int n = 0; n < B; ++n)
             {
                 int argm = 0;
                 float best = logits[(size_t)n * O + 0];
+
                 for (int c = 1; c < O; ++c)
                 {
                     float v = logits[(size_t)n * O + c];
@@ -969,91 +994,107 @@ int main()
             conv2d_nchw_pad1_backward(Xb, B, C, H, W, Wc, dWc, dbc, F, K, dx1_after_pool, dX);
 
             // SGD step
+
             for (size_t i = 0; i < Wl.size(); ++i)
                 Wl[i] -= lr * dWl[i];
+
             for (int i = 0; i < O; ++i)
                 bl[i] -= lr * dbl[i];
+
             for (size_t i = 0; i < Wc.size(); ++i)
                 Wc[i] -= lr * dWc[i];
+
             for (int i = 0; i < F; ++i)
                 bc[i] -= lr * dbc[i];
+
+            MPI_Allreduce(&correct, &correct_buffer, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&epoch_loss, &epoch_loss_buffer, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&epoch_count, &epoch_count_buffer, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&total, &total_buffer, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
             if (((s / batch) % 5) == 0)
             {
                 std::cout << "Epoch " << ep + 1 << ", batch " << (s / batch) << ": loss=" << std::fixed << std::setprecision(4) << loss
-                          << ", running acc=" << std::setprecision(2) << (100.0 * correct / std::max(1, total)) << "%\n";
+                          << ", running acc=" << std::setprecision(2) << (100.0 * correct_buffer / std::max(1, total_buffer)) << "%\n";
             }
         }
     }
 
-    std::cout << "Training done. Avg loss=" << std::fixed << std::setprecision(4) << (epoch_loss / std::max(1, epoch_count))
-              << ", train acc=" << std::setprecision(2) << (100.0 * correct / std::max(1, total)) << "%\n";
+    if (rank == 0)
+    {
+        std::cout << "Training done. Avg loss=" << std::fixed << std::setprecision(4) << (epoch_loss_buffer / std::max(1, epoch_count_buffer))
+                  << ", train acc=" << std::setprecision(2) << (100.0 * correct_buffer / std::max(1, total_buffer)) << "%\n";
 
-    // Evaluate on test set (limit to 1000 samples for speed)
-    float testAcc = evaluate_on_mnist("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", 1000,
-                                      Wc, bc, Wl, bl, F, C, H, W, K, O);
-    if (testAcc >= 0.0f)
-    {
-        std::cout << "Test accuracy (1000 samples): " << std::setprecision(2) << testAcc << "%\n";
-    }
-    else
-    {
-        std::cout << "Test set not found; skipping evaluation.\n";
-    }
-
-    // Save model
-    std::string weightsOut = "bin/mnist_cnn_weights.txt";
-    if (save_model_text(weightsOut, Wc, bc, Wl, bl, F, C, K, O, D))
-    {
-        std::cout << "Saved weights to " << weightsOut << "\n";
-    }
-    else
-    {
-        std::cout << "Failed to save weights to " << weightsOut << "\n";
-    }
-
-    // Quick inference on the very first training sample
-    std::vector<float> Xtest((size_t)1 * C * H * W, 0.0f);
-    for (int i = 0; i < H; ++i)
-        for (int j = 0; j < W; ++j)
-            Xtest[idx4(0, 0, i, j, C, H, W)] = imgsHW[(size_t)0 * H * W + (size_t)i * W + j];
-    auto t1 = conv2d_nchw_pad1(Xtest, 1, C, H, W, Wc, bc, F, K);
-    relu_inplace_nchw(t1);
-    int H2t = 0, W2t = 0;
-    auto t2 = maxpool2d_2x2_s2(t1, 1, F, H, W, H2t, W2t);
-    auto Xft = flatten_nchw(t2, 1, F, H2t, W2t);
-    auto logt = linear_forward(Xft, 1, D, Wl, bl, O);
-    int pred = 0;
-    float bestv = logt[0];
-    for (int c = 1; c < O; ++c)
-        if (logt[c] > bestv)
+        // Evaluate on test set (limit to 1000 samples for speed)
+        float testAcc = evaluate_on_mnist("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", 1000,
+                                          Wc, bc, Wl, bl, F, C, H, W, K, O);
+        if (testAcc >= 0.0f)
         {
-            bestv = logt[c];
-            pred = c;
+            std::cout << "Test accuracy (1000 samples): " << std::setprecision(2) << testAcc << "%\n";
         }
-    std::cout << "First sample true=" << labelsInt[0] << ", pred=" << pred << "\n";
+        else
+        {
+            std::cout << "Test set not found; skipping evaluation.\n";
+        }
 
-    // Demonstrate load model and predict again for consistency
-    std::vector<float> Wc2, bc2, Wl2, bl2;
-    if (load_model_text(weightsOut, Wc2, bc2, Wl2, bl2, F, C, K, O, D))
-    {
-        auto t1b = conv2d_nchw_pad1(Xtest, 1, C, H, W, Wc2, bc2, F, K);
-        relu_inplace_nchw(t1b);
-        int H2b = 0, W2b = 0;
-        auto t2b = maxpool2d_2x2_s2(t1b, 1, F, H, W, H2b, W2b);
-        auto Xfb = flatten_nchw(t2b, 1, F, H2b, W2b);
-        auto logb = linear_forward(Xfb, 1, D, Wl2, bl2, O);
-        int pred2 = 0;
-        float best2 = logb[0];
+        // Save model
+        std::string weightsOut = "bin/mnist_cnn_weights.txt";
+        if (save_model_text(weightsOut, Wc, bc, Wl, bl, F, C, K, O, D))
+        {
+            std::cout << "Saved weights to " << weightsOut << "\n";
+        }
+        else
+        {
+            std::cout << "Failed to save weights to " << weightsOut << "\n";
+        }
+
+        // Quick inference on the very first training sample
+        std::vector<float> Xtest((size_t)1 * C * H * W, 0.0f);
+
+        for (int i = 0; i < H; ++i)
+            for (int j = 0; j < W; ++j)
+                Xtest[idx4(0, 0, i, j, C, H, W)] = imgsHW[(size_t)0 * H * W + (size_t)i * W + j];
+        auto t1 = conv2d_nchw_pad1(Xtest, 1, C, H, W, Wc, bc, F, K, 0, 1);
+        relu_inplace_nchw(t1);
+        int H2t = 0, W2t = 0;
+        auto t2 = maxpool2d_2x2_s2(t1, 1, F, H, W, H2t, W2t);
+        auto Xft = flatten_nchw(t2, 1, F, H2t, W2t);
+        auto logt = linear_forward(Xft, 1, D, Wl, bl, O);
+        int pred = 0;
+        float bestv = logt[0];
+
         for (int c = 1; c < O; ++c)
-            if (logb[c] > best2)
+            if (logt[c] > bestv)
             {
-                best2 = logb[c];
-                pred2 = c;
+                bestv = logt[c];
+                pred = c;
             }
-        std::cout << "Reloaded weights: first sample pred=" << pred2 << "\n";
-    }
+        std::cout << "First sample true=" << labelsInt[0] << ", pred=" << pred << "\n";
 
-    std::cout << "Done." << std::endl;
+        // Demonstrate load model and predict again for consistency
+        std::vector<float> Wc2, bc2, Wl2, bl2;
+        if (load_model_text(weightsOut, Wc2, bc2, Wl2, bl2, F, C, K, O, D))
+        {
+            auto t1b = conv2d_nchw_pad1(Xtest, 1, C, H, W, Wc2, bc2, F, K, 0, 1);
+            relu_inplace_nchw(t1b);
+            int H2b = 0, W2b = 0;
+            auto t2b = maxpool2d_2x2_s2(t1b, 1, F, H, W, H2b, W2b);
+            auto Xfb = flatten_nchw(t2b, 1, F, H2b, W2b);
+            auto logb = linear_forward(Xfb, 1, D, Wl2, bl2, O);
+            int pred2 = 0;
+            float best2 = logb[0];
+
+            for (int c = 1; c < O; ++c)
+                if (logb[c] > best2)
+                {
+                    best2 = logb[c];
+                    pred2 = c;
+                }
+            std::cout << "Reloaded weights: first sample pred=" << pred2 << "\n";
+        }
+
+        std::cout << "Done." << std::endl;
+    }
+    MPI_Finalize();
     return 0;
 }

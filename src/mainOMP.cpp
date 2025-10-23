@@ -1,4 +1,17 @@
 /*
+OS - Kubuntu 25.04
+CPU - Intel Core i5-12500
+MEM - 16 GB
+G++ - 14.2
+MPI - 5.0.7
+
+Tempos de Execução
+1 Thread - 16.5s
+2 Threads - 13.2s
+4 Threads - 8.8s
+*/
+
+/*
     Tiny CNN primitives.
 */
 
@@ -21,10 +34,10 @@ const int F = 8;
 const int K = 3;
 const int O = 10;
 // Training loop settings
-const int trainN = 256; // number of samples to train on
-const int batch = 32;   // batch size
-const int epochs = 50;  // epochs
-const float lr = 0.01f; // learning rate
+const int trainN = 1024; // number of samples to train on
+const int batch = 32;    // batch size
+const int epochs = 50;   // epochs
+const float lr = 0.01f;  // learning rate
 
 /**
  * @brief Computes the flattened 1D index for a 4D tensor (N, C, H, W) in row-major order.
@@ -433,35 +446,18 @@ void linear_backward(const std::vector<float> &X, int N, int D,
     dW.assign((size_t)D * O, 0.0f);
     db.assign((size_t)O, 0.0f);
 
-#pragma omp parallel
+#pragma omp parallel for schedule(static)
+    for (int n = 0; n < N; ++n)
     {
-        // acumuladores locais por thread
-        std::vector<float> dW_local((size_t)D * O, 0.0f);
-        std::vector<float> db_local((size_t)O, 0.0f);
-
-// cada thread pega um subconjunto de n; dX[n,*] é exclusivo e pode escrever direto
-#pragma omp for schedule(static)
-        for (int n = 0; n < N; ++n)
+        for (int o = 0; o < O; ++o)
         {
-            for (int o = 0; o < O; ++o)
+            float g = dY[(size_t)n * O + o];
+            db[o] += g;
+            for (int d = 0; d < D; ++d)
             {
-                float g = dY[(size_t)n * O + o];
-                db_local[o] += g;
-                for (int d = 0; d < D; ++d)
-                {
-                    dW_local[(size_t)d * O + o] += X[(size_t)n * D + d] * g;
-                    dX[(size_t)n * D + d] += W[(size_t)d * O + o] * g;
-                }
+                dW[(size_t)d * O + o] += X[(size_t)n * D + d] * g;
+                dX[(size_t)n * D + d] += W[(size_t)d * O + o] * g;
             }
-        }
-
-// fusão segura
-#pragma omp critical
-        {
-            for (size_t i = 0; i < dW.size(); ++i)
-                dW[i] += dW_local[i];
-            for (int o = 0; o < O; ++o)
-                db[o] += db_local[o];
         }
     }
 }
@@ -566,64 +562,46 @@ void conv2d_nchw_pad1_backward(
 {
     const int pad = 1;
     const int OH = H, OW = W;
-
     dX.assign((size_t)N * C * H * W, 0.0f);
     dWc.assign((size_t)F * C * K * K, 0.0f);
     dbc.assign((size_t)F, 0.0f);
 
-#pragma omp parallel
+    // db
+    for (int n = 0; n < N; ++n)
+        for (int f = 0; f < F; ++f)
+            for (int i = 0; i < OH; ++i)
+                for (int j = 0; j < OW; ++j)
+                    dbc[f] += dY[idx4(n, f, i, j, F, OH, OW)];
+
+// dW and dX
+#pragma omp parallel for schedule(static)
+    for (int n = 0; n < N; ++n)
     {
-        std::vector<float> dWc_local((size_t)F * C * K * K, 0.0f);
-        std::vector<float> dbc_local((size_t)F, 0.0f);
-
-// distribui (n,f,i); itera j por dentro
-#pragma omp for collapse(3) schedule(static)
-        for (int n = 0; n < N; ++n)
+        for (int f = 0; f < F; ++f)
         {
-            for (int f = 0; f < F; ++f)
+            for (int i = 0; i < OH; ++i)
             {
-                for (int i = 0; i < OH; ++i)
+                for (int j = 0; j < OW; ++j)
                 {
-                    for (int j = 0; j < OW; ++j)
+                    float g = dY[idx4(n, f, i, j, F, OH, OW)];
+                    for (int c = 0; c < C; ++c)
                     {
-                        float g = dY[idx4(n, f, i, j, F, OH, OW)];
-                        dbc_local[f] += g;
-
-                        for (int c = 0; c < C; ++c)
+                        for (int ki = 0; ki < K; ++ki)
                         {
-                            for (int ki = 0; ki < K; ++ki)
+                            for (int kj = 0; kj < K; ++kj)
                             {
-                                for (int kj = 0; kj < K; ++kj)
+                                int in_i = i + ki - pad;
+                                int in_j = j + kj - pad;
+                                if (in_i >= 0 && in_i < H && in_j >= 0 && in_j < W)
                                 {
-                                    int in_i = i + ki - pad;
-                                    int in_j = j + kj - pad;
-                                    if (in_i >= 0 && in_i < H && in_j >= 0 && in_j < W)
-                                    {
-                                        size_t xidx = idx4(n, c, in_i, in_j, C, H, W);
-                                        size_t widx = ((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj;
-                                        float xv = X[xidx];
-
-                                        dWc_local[widx] += xv * g;
-
-// dX recebe contribuições de múltiplos (f,i,j) -> atomic
-#pragma omp atomic
-                                        dX[xidx] += Wc[widx] * g;
-                                    }
+                                    dWc[((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj] += X[idx4(n, c, in_i, in_j, C, H, W)] * g;
+                                    dX[idx4(n, c, in_i, in_j, C, H, W)] += Wc[((size_t)f * C * K * K) + ((size_t)c * K * K) + ((size_t)ki * K) + (size_t)kj] * g;
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-
-// fusão
-#pragma omp critical
-        {
-            for (size_t i = 0; i < dWc.size(); ++i)
-                dWc[i] += dWc_local[i];
-            for (int f = 0; f < F; ++f)
-                dbc[f] += dbc_local[f];
         }
     }
 }
@@ -805,6 +783,7 @@ float evaluate_on_mnist(const std::string &imgPath, const std::string &lblPath, 
 
 int main()
 {
+    // omp_set_num_threads(4);
     // Try to load one MNIST sample if file paths are given: ./cnn_minimal <images-idx3-ubyte> <labels-idx1-ubyte>
     int N = 1, C = 1, H = 28, W = 28;
     std::vector<float> x((size_t)N * C * H * W, 0.0f);

@@ -1,0 +1,191 @@
+=== OMP_NUM_THREADS=1 (REPS=5) ===
+  run 1: 10.68 s
+  run 2: 10.28 s
+  run 3: 10.26 s
+  run 4: 10.22 s
+  run 5: 10.22 s
+  avg: 10.332000 s
+
+=== OMP_NUM_THREADS=2 (REPS=5) ===
+  run 1: 6.37 s
+  run 2: 6.46 s
+  run 3: 6.39 s
+  run 4: 6.22 s
+  run 5: 6.23 s
+  avg: 6.334000 s
+
+=== OMP_NUM_THREADS=4 (REPS=5) ===
+  run 1: 5.12 s
+  run 2: 5.04 s
+  run 3: 5.03 s
+  run 4: 5.08 s
+  run 5: 5.04 s
+  avg: 5.062000 s
+
+=== OMP_NUM_THREADS=8 (REPS=5) ===
+  run 1: 5.20 s
+  run 2: 5.16 s
+  run 3: 5.11 s
+  run 4: 5.07 s
+  run 5: 5.05 s
+  avg: 5.118000 s
+
+=== MPI np=1 (REPS=5) ===
+  run 1: 10.65 s
+  run 2: 10.41 s
+  run 3: 10.29 s
+  run 4: 10.19 s
+  run 5: 10.30 s
+  avg: 10.368000 s
+
+=== MPI np=2 (REPS=5) ===
+  run 1: 5.38 s
+  run 2: 5.41 s
+  run 3: 5.55 s
+  run 4: 5.27 s
+  run 5: 5.42 s
+  avg: 5.406000 s
+
+=== MPI np=4 (REPS=5) ===
+  run 1: 2.94 s
+  run 2: 2.97 s
+  run 3: 2.95 s
+  run 4: 3.16 s
+  run 5: 3.04 s
+  avg: 3.012000 s
+
+=== MPI np=8 (REPS=5) ===
+  run 1: 3.75 s
+  run 2: 3.78 s
+  run 3: 3.75 s
+  run 4: 3.83 s
+  run 5: 3.86 s
+  avg: 3.794000 s
+
+=== HÍBRIDO np=1, OMP_NUM_THREADS=1 (REPS=5) ===
+  run 1: 10.45 s
+  run 2: 10.62 s
+  run 3: 10.29 s
+  run 4: 10.47 s
+  run 5: 10.30 s
+  avg: 10.426000 s
+
+=== HÍBRIDO np=1, OMP_NUM_THREADS=2 (REPS=5) ===
+  run 1: 6.18 s
+  run 2: 6.30 s
+  run 3: 6.41 s
+  run 4: 6.39 s
+  run 5: 6.42 s
+  avg: 6.340000 s
+
+=== HÍBRIDO np=1, OMP_NUM_THREADS=4 (REPS=5) ===
+  run 1: 5.17 s
+  run 2: 5.19 s
+  run 3: 5.18 s
+  run 4: 5.07 s
+  run 5: 5.14 s
+  avg: 5.150000 s
+
+=== HÍBRIDO np=1, OMP_NUM_THREADS=8 (REPS=5) ===
+  run 1: 5.41 s
+  run 2: 5.45 s
+  run 3: 6.45 s
+  run 4: 8.29 s
+  run 5: 6.35 s
+  avg: 6.390000 s
+
+=== HÍBRIDO np=2, OMP_NUM_THREADS=1 (REPS=5) ===
+  run 1: 5.65 s
+  run 2: 5.65 s
+  run 3: 6.26 s
+  run 4: 5.68 s
+  run 5: 5.73 s
+  avg: 5.794000 s
+
+=== HÍBRIDO np=2, OMP_NUM_THREADS=2 (REPS=5) ===
+  run 1: 4.12 s
+  run 2: 4.08 s
+  run 3: 4.17 s
+  run 4: 4.47 s
+  run 5: 4.23 s
+  avg: 4.214000 s
+
+=== HÍBRIDO np=2, OMP_NUM_THREADS=4 (REPS=5) ===
+  run 1: 4.21 s
+  run 2: 4.21 s
+  run 3: 4.14 s
+  run 4: 4.37 s
+  run 5: 4.45 s
+  avg: 4.276000 s
+
+=== HÍBRIDO np=2, OMP_NUM_THREADS=8 (REPS=5) ===
+  run 1: 4.65 s
+  run 2: 4.51 s
+  run 3: 4.52 s
+  run 4: 4.34 s
+  run 5: 4.37 s
+  avg: 4.478000 s
+
+=== HÍBRIDO np=4, OMP_NUM_THREADS=1 (REPS=5) ===
+  run 1: 3.62 s
+  run 2: 3.76 s
+  run 3: 3.88 s
+  run 4: 4.07 s
+  run 5: 3.71 s
+  avg: 3.808000 s
+
+=== HÍBRIDO np=4, OMP_NUM_THREADS=2 (REPS=5) ===
+  run 1: 3.94 s
+  run 2: 4.39 s
+  run 3: 3.66 s
+  run 4: 3.58 s
+  run 5: 4.17 s
+  avg: 3.948000 s
+
+=== HÍBRIDO np=4, OMP_NUM_THREADS=4 (REPS=5) ===
+  run 1: 4.66 s
+  run 2: 4.90 s
+  run 3: 4.20 s
+  run 4: 3.84 s
+  run 5: 3.86 s
+  avg: 4.292000 s
+
+=== HÍBRIDO np=4, OMP_NUM_THREADS=8 (REPS=5) ===
+  run 1: 4.90 s
+  run 2: 4.64 s
+  run 3: 4.51 s
+  run 4: 4.50 s
+  run 5: 4.45 s
+  avg: 4.600000 s
+
+=== HÍBRIDO np=8, OMP_NUM_THREADS=1 (REPS=5) ===
+  run 1: 4.28 s
+  run 2: 4.22 s
+  run 3: 3.99 s
+  run 4: 4.27 s
+  run 5: 4.68 s
+  avg: 4.288000 s
+
+=== HÍBRIDO np=8, OMP_NUM_THREADS=2 (REPS=5) ===
+  run 1: 5.07 s
+  run 2: 5.47 s
+  run 3: 5.69 s
+  run 4: 5.33 s
+  run 5: 5.22 s
+  avg: 5.356000 s
+
+=== HÍBRIDO np=8, OMP_NUM_THREADS=4 (REPS=5) ===
+  run 1: 5.95 s
+  run 2: 6.17 s
+  run 3: 5.89 s
+  run 4: 6.57 s
+  run 5: 5.87 s
+  avg: 6.090000 s
+
+=== HÍBRIDO np=8, OMP_NUM_THREADS=8 (REPS=5) ===
+  run 1: 6.36 s
+  run 2: 6.75 s
+  run 3: 7.92 s
+  run 4: 7.42 s
+  run 5: 7.71 s
+  avg: 7.232000 s
